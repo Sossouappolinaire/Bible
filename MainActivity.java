@@ -10,7 +10,12 @@ import android.content.SharedPreferences;
 import android.content.res.ColorStateList;
 import android.graphics.Outline;
 import android.graphics.Typeface;
+import android.text.SpannableStringBuilder;
+import android.text.Spanned;
 import android.text.TextUtils;
+import android.text.style.ForegroundColorSpan;
+import android.text.style.RelativeSizeSpan;
+import android.text.style.StyleSpan;
 import android.graphics.drawable.ClipDrawable;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
@@ -456,7 +461,7 @@ public class MainActivity extends Activity {
     }
 
     void accueil() {
-        ecran("📖 Parole Vivante", true);
+        ecran("📖 Academy biblique", true);
         home = true;
         TextView sub = new TextView(this);
         sub.setText("Préparez vos messages avec la Parole de Dieu");
@@ -466,9 +471,8 @@ public class MainActivity extends Activity {
         head.addView(sub);
         head.addView(numeroDefilant());
         t("« Ta parole est une lampe à mes pieds, et une lumière sur mon sentier. »\n— Psaumes 119:105", 16, false);
-        b("Préparation de mes prédications", () -> recherche("Thèmes", themesLocaux(), this::theme));
+        b("📚 Préparation de mes prédications (thèmes et sujets)", () -> recherche("Thèmes et sujets", themesEtSujets(), this::ouvrirThemeOuSujet));
         b("✍️ ÉCRIRE un thème à développer", this::ecrireTheme);
-        b("Sujets supplémentaires (versets)", () -> recherche("Sujets", arr("topics"), this::sujet));
         b("Prédications développées (commentaires)", this::passage);
         b("Questions / Réponses", () -> recherche("Questions / Réponses", arr("glossary"), this::reponse));
         b("Rechercher un verset", this::verset);
@@ -554,6 +558,18 @@ public class MainActivity extends Activity {
         } catch (Exception e) { }
     }
 
+    // Une seule liste : thèmes enregistrés + thèmes intégrés + sujets téléchargés
+    JSONArray themesEtSujets() {
+        JSONArray out = themesLocaux();
+        JSONArray tp = arr("topics");
+        for (int i = 0; i < tp.length(); i++) out.put(tp.opt(i));
+        return out;
+    }
+
+    void ouvrirThemeOuSujet(JSONObject o) {
+        if (o.has("id") && !o.has("texte")) sujet(o); else theme(o);
+    }
+
     void theme(JSONObject o) {
         ecran(o.optString("fr"));
         if (o.has("texte")) {
@@ -584,13 +600,23 @@ public class MainActivity extends Activity {
     static final String IA_MODELE = "openai";
     static final String IA_SYSTEME =
         "Tu es un théologien protestant évangélique et un prédicateur expérimenté. Tu écris toujours en français. "
-        + "L'utilisateur te donne un thème ou un sujet. Développe-le en un LONG texte structuré, pour préparer une prédication, avec ces parties : "
-        + "1. Définition ; 2. Fondement biblique (citer de nombreux versets avec leur référence, version Louis Segond) ; "
-        + "3. Exemples bibliques (personnages et récits, expliqués en détail) ; "
-        + "4. Enseignement des docteurs et théologiens reconnus (par exemple Augustin, Luther, Calvin, Wesley, Matthew Henry, Spurgeon, Moody, Tozer, Stott) : "
-        + "résume leur pensée avec tes propres mots et cite l'ouvrage seulement si tu en es certain ; n'invente JAMAIS de citation ni de référence de livre ; "
-        + "5. Exemples concrets de la vie quotidienne (famille, travail, église, société) ; 6. Applications pratiques ; 7. Conclusion et appel. "
+        + "Tu rédiges des sections d'un très long développement destiné à préparer une prédication, après une recherche approfondie du thème : "
+        + "sens des mots en hébreu et en grec, contexte historique et culturel, lien entre l'Ancien et le Nouveau Testament, enseignement de Jésus et des apôtres. "
+        + "Écris en paragraphes complets et détaillés, sans résumer, sans abréger : développe chaque idée à fond. "
+        + "Cite de nombreux versets avec leur référence (version Louis Segond) et explique-les ; raconte en détail les personnages et les récits bibliques ; "
+        + "donne des exemples concrets de la vie quotidienne (famille, travail, église, jeunesse, société). "
+        + "Intègre naturellement, au fil du texte, l'éclairage de théologiens et prédicateurs reconnus (Augustin, Luther, Calvin, Wesley, Matthew Henry, Spurgeon, Moody, Tozer, Stott…) : "
+        + "résume leur pensée avec tes propres mots et cite un ouvrage seulement si tu en es certain ; n'invente JAMAIS de citation ni de référence de livre. "
+        + "N'utilise JAMAIS de rubriques toutes faites comme « Définition », « Caractéristiques », « Avantages », « Inconvénients », « Conséquences », "
+        + "« Exemples bibliques », « Exemples concrets », « Docteurs bibliques » ou « Conclusion » : trouve toi-même des sous-titres propres à ce thème. "
         + "Reste fidèle à la Bible. Si le sujet n'est pas biblique ou chrétien, dis-le brièvement et propose un angle biblique proche.";
+
+    static final String IA_SYSTEME_PLAN =
+        "Tu es un théologien protestant évangélique et un prédicateur expérimenté. Tu écris toujours en français. "
+        + "Tu prépares le plan d'un très long développement sur un thème biblique, après avoir cherché en profondeur ce que la Bible et la tradition chrétienne en disent. "
+        + "Tu réponds uniquement par la liste des sous-titres demandés, un par ligne, sans numéro, sans explication.";
+
+    static final int NB_SOUS_TITRES = 8;
 
     // Fournisseurs gratuits sans clé, essayés dans l'ordre jusqu'à ce que l'un réponde : {adresse chat, adresse modèles, modèle imposé}
     static final String[][] FOURNISSEURS = {
@@ -632,13 +658,13 @@ public class MainActivity extends Activity {
         return m;
     }
 
-    String appeler(String url, String modele, String cle, String theme) throws Exception {
+    String appeler(String url, String modele, String cle, String systeme, String user, int min) throws Exception {
         JSONObject corps = new JSONObject()
             .put("model", modele)
             .put("max_tokens", 4000)
             .put("messages", new JSONArray()
-                .put(new JSONObject().put("role", "system").put("content", IA_SYSTEME))
-                .put(new JSONObject().put("role", "user").put("content", "Thème ou sujet à développer : " + theme)));
+                .put(new JSONObject().put("role", "system").put("content", systeme))
+                .put(new JSONObject().put("role", "user").put("content", user)));
         HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
         c.setConnectTimeout(12000);
         c.setReadTimeout(110000);
@@ -655,22 +681,27 @@ public class MainActivity extends Activity {
             if (!rep.isEmpty() && !rep.startsWith("{")) m = rep; // certains services renvoient directement le texte
         }
         m = m.replaceAll("(?s)<think>.*?</think>", "").trim();
-        if (m.length() < 200) throw new Exception("réponse trop courte");
+        if (m.length() < min) throw new Exception("réponse trop courte");
         return m;
     }
 
-    String ia(String theme) throws Exception {
+    static String[] bonFournisseur = null; // dernier service qui a répondu : essayé en premier
+
+    String ia(String systeme, String user, int min) throws Exception {
         String cle = sp.getString("ia_cle", "");
         java.util.ArrayList<String[]> liste = new java.util.ArrayList<>();
         String perso = sp.getString("ia_url", IA_URL);
         if (!perso.equals(IA_URL)) liste.add(new String[]{perso, "", sp.getString("ia_modele", IA_MODELE)});
-        for (String[] f : FOURNISSEURS) liste.add(f);
+        if (bonFournisseur != null) liste.add(bonFournisseur);
+        for (String[] f : FOURNISSEURS) if (f != bonFournisseur) liste.add(f);
         String erreurs = "";
         for (String[] f : liste) {
             try {
                 String modele = f[2];
                 if (modele.isEmpty()) modele = modeleAuto(f[1], cle.isEmpty() || !f[0].equals(perso) ? "" : cle);
-                return appeler(f[0], modele, f[0].equals(perso) ? cle : "", theme);
+                String r = appeler(f[0], modele, f[0].equals(perso) ? cle : "", systeme, user, min);
+                if (!f[0].equals(perso)) bonFournisseur = f;
+                return r;
             } catch (Exception x) {
                 erreurs += (erreurs.isEmpty() ? "" : " ; ") + Uri.parse(f[0]).getHost() + " : " + x.getMessage();
             }
@@ -678,26 +709,57 @@ public class MainActivity extends Activity {
         throw new Exception(erreurs);
     }
 
-    void reglagesIA() {
-        LinearLayout l = new LinearLayout(this);
-        l.setOrientation(LinearLayout.VERTICAL);
-        l.setPadding(40, 20, 40, 0);
-        EditText u = new EditText(this);
-        u.setHint("Adresse du service (facultatif)");
-        u.setText(sp.getString("ia_url", IA_URL));
-        EditText m = new EditText(this);
-        m.setHint("Modèle");
-        m.setText(sp.getString("ia_modele", IA_MODELE));
-        EditText k = new EditText(this);
-        k.setHint("Clé API (facultative)");
-        k.setText(sp.getString("ia_cle", ""));
-        l.addView(u); l.addView(m); l.addView(k);
-        new AlertDialog.Builder(this).setTitle("⚙ Réglages").setView(l)
-            .setPositiveButton("Enregistrer", (d, w) -> sp.edit()
-                .putString("ia_url", u.getText().toString().trim().isEmpty() ? IA_URL : u.getText().toString().trim())
-                .putString("ia_modele", m.getText().toString().trim().isEmpty() ? IA_MODELE : m.getText().toString().trim())
-                .putString("ia_cle", k.getText().toString().trim()).apply())
-            .setNegativeButton("Annuler", null).show();
+    // Étape 1 : l'IA cherche elle-même les sous-titres propres au thème
+    String[] planifier(String th) throws Exception {
+        String user = "Thème ou sujet : " + th + "\n\nPropose exactement " + NB_SOUS_TITRES + " sous-titres, propres à CE thème, pour en faire un très long développement "
+            + "qui va de la découverte du thème jusqu'à la mise en pratique. Chaque sous-titre doit être précis, évocateur et différent de tous les autres. "
+            + "Interdit : « Définition », « Caractéristiques », « Avantages », « Inconvénients », « Conséquences », « Exemples », « Docteurs », « Introduction », « Conclusion ». "
+            + "Le dernier sous-titre doit appeler à la mise en pratique, formulé selon le thème. Réponds uniquement par les " + NB_SOUS_TITRES + " sous-titres, un par ligne.";
+        String rep = ia(IA_SYSTEME_PLAN, user, 40);
+        java.util.ArrayList<String> out = new java.util.ArrayList<>();
+        for (String l : rep.split("\n")) {
+            String x = l.trim().replaceAll("^[#*\\-•\\d.)\\s]+", "").replace("**", "").replaceAll("^[«\"]|[»\"]$", "").trim();
+            String n = norm(x);
+            if (x.length() < 4 || x.length() > 120) continue;
+            if (n.matches("^(definition|caracteristique|avantage|inconvenient|consequence|conclusion|introduction|exemples?|docteur).*")) continue;
+            out.add(x);
+            if (out.size() == NB_SOUS_TITRES) break;
+        }
+        if (out.size() < 4) throw new Exception("plan insuffisant");
+        return out.toArray(new String[0]);
+    }
+
+    // Étape 2 : rédaction de 2 sous-titres du plan à chaque appel
+    String consigneSections(String th, String[] plan, int a, int b, boolean premier, boolean dernier) {
+        StringBuilder sb = new StringBuilder("Thème ou sujet : " + th + "\n\nPlan complet du développement :\n");
+        for (int i = 0; i < plan.length; i++) sb.append(i + 1).append(". ").append(plan[i]).append("\n");
+        sb.append("\nRédige maintenant, dans cet ordre, la section ");
+        for (int i = a; i < b; i++) sb.append(i > a ? " puis la section " : "").append("n° ").append(i + 1).append(" « ").append(plan[i]).append(" »");
+        sb.append(".\nÉcris chaque sous-titre exactement tel quel, seul sur sa ligne, précédé de « ## ». Sous chaque sous-titre, développe en au moins 500 mots : ")
+          .append("paragraphes riches, nombreux versets cités avec référence et expliqués, récits et personnages bibliques racontés en détail, ")
+          .append("éclairage de théologiens reconnus intégré au fil du texte, exemples concrets de la vie quotidienne. ")
+          .append("N'ajoute aucun autre sous-titre et ne répète pas ce qui est dit dans les autres sections.");
+        if (premier) sb.append(" Avant le premier sous-titre, écris une introduction accrocante de 2 paragraphes, sans titre.");
+        if (dernier) sb.append(" Termine par un appel final et une courte prière.");
+        return sb.toString();
+    }
+
+    SpannableStringBuilder mettreEnForme(String texte) {
+        SpannableStringBuilder sb = new SpannableStringBuilder();
+        for (String l : texte.replace("\r", "").split("\n")) {
+            String t = l.trim();
+            if (t.startsWith("#")) {
+                String titre = t.replaceAll("^#+\\s*", "").replace("**", "").trim();
+                int d = sb.length();
+                sb.append(titre).append("\n");
+                sb.setSpan(new StyleSpan(Typeface.BOLD), d, sb.length() - 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                sb.setSpan(new RelativeSizeSpan(1.2f), d, sb.length() - 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                sb.setSpan(new ForegroundColorSpan(0xFF3D2C8D), d, sb.length() - 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            } else {
+                sb.append(l.replace("**", "")).append("\n");
+            }
+        }
+        return sb;
     }
 
     void ecrireTheme() {
@@ -714,7 +776,6 @@ public class MainActivity extends Activity {
             if (th.isEmpty()) { Toast.makeText(this, "Saisissez d'abord un thème", Toast.LENGTH_SHORT).show(); return; }
             developper(th, res);
         });
-        b("⚙ Réglages", this::reglagesIA);
         box.addView(res);
     }
 
@@ -726,7 +787,7 @@ public class MainActivity extends Activity {
         carte(tv);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         lp.setMargins(0, dp(10), 0, dp(6));
-        String ck = "ia_" + norm(th).hashCode();
+        String ck = "ia2_" + norm(th).hashCode();
         String done = sp.getString(ck, null);
         if (done != null) {
             sauverTheme(th, done);
@@ -740,19 +801,49 @@ public class MainActivity extends Activity {
             res.addView(tv, lp);
             return;
         }
-        progression(res, new String[]{"🔍 Recherche dans les écrits des docteurs bibliques…", "📖 Rassemblement des versets et des exemples…",
-            "✍️ Rédaction du développement…", "🕊️ Mise en forme finale…"});
+        LinearLayout carteProg = progression(res, new String[]{"🔎 Recherche approfondie du thème…"});
+        TextView msgProg = (TextView) carteProg.getChildAt(1);
         new Thread(() -> {
-            try {
-                String r = ia(th);
-                sp.edit().putString(ck, r).apply();
-                sauverTheme(th, r);
-                runOnUiThread(() -> { res.removeAllViews(); res.addView(tv, lp); afficher(res, tv, r); ajouterNote(res); });
-            } catch (Exception x) {
-                String msg = "Impossible de développer ce thème pour le moment. Vérifiez Internet et réessayez dans une minute. "
-                    + "Vous pouvez aussi mettre votre propre adresse/clé dans « ⚙ Réglages ».";
-                runOnUiThread(() -> { res.removeAllViews(); tv.setText(msg); res.addView(tv, lp); });
+            runOnUiThread(() -> msgProg.setText("🔎 Recherche approfondie du thème et préparation du plan…"));
+            String[] plan = null;
+            for (int essai = 0; essai < 2 && plan == null; essai++) {
+                try { plan = planifier(th); } catch (Exception x) { }
             }
+            if (plan == null) {
+                String msg = "Impossible de développer ce thème pour le moment. Vérifiez Internet et réessayez dans une minute.";
+                runOnUiThread(() -> { res.removeAllViews(); tv.setText(msg); res.addView(tv, lp); });
+                return;
+            }
+            final String[] pl = plan;
+            final int groupes = (pl.length + 1) / 2;
+            StringBuilder tout = new StringBuilder();
+            int ok = 0;
+            for (int g = 0; g < groupes; g++) {
+                final int a = g * 2, b = Math.min(a + 2, pl.length), n = g;
+                runOnUiThread(() -> msgProg.setText("✍️ Rédaction, partie " + (n + 1) + " sur " + groupes + " :\n« " + pl[a] + " »"
+                    + (b - a > 1 ? "\n« " + pl[a + 1] + " »" : "") + "\n\nLe développement est long : patientez quelques minutes."));
+                for (int essai = 0; essai < 2; essai++) {
+                    try {
+                        tout.append(ia(IA_SYSTEME, consigneSections(th, pl, a, b, g == 0, g == groupes - 1), 600)).append("\n\n");
+                        ok++;
+                        break;
+                    } catch (Exception x) { }
+                }
+            }
+            final String r = tout.toString().trim();
+            final boolean complet = ok == groupes;
+            if (ok == 0) {
+                String msg = "Impossible de développer ce thème pour le moment. Vérifiez Internet et réessayez dans une minute.";
+                runOnUiThread(() -> { res.removeAllViews(); tv.setText(msg); res.addView(tv, lp); });
+                return;
+            }
+            if (complet) { sp.edit().putString(ck, r).apply(); sauverTheme(th, r); }
+            runOnUiThread(() -> {
+                res.removeAllViews();
+                res.addView(tv, lp);
+                afficher(res, tv, complet ? r : r + "\n\n(Certaines parties n'ont pas pu être rédigées : relancez le thème plus tard pour avoir le développement complet. Ce texte n'est pas enregistré.)");
+                if (complet) ajouterNote(res);
+            });
         }).start();
     }
 
@@ -767,7 +858,7 @@ public class MainActivity extends Activity {
     }
 
     void afficher(LinearLayout res, TextView tv, String texte) {
-        tv.setText(texte.replace("**", "").replace("### ", "").replace("## ", "").replace("# ", ""));
+        tv.setText(mettreEnForme(texte));
         TextView n = new TextView(this);
         n.setText("ℹ️ Texte généré automatiquement : vérifiez les versets et les citations avant de prêcher.");
         n.setTextSize(13);
