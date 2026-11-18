@@ -159,7 +159,7 @@ public class LiveActivity extends Activity {
         root.addView(r4);
         if (inst != BeatModel.DRUMS) {
             rhyBtn = btn("🥁 Rythme du style en boucle (pour composer dessus)", TCOL[0]);
-            rhyBtn.setOnClickListener(v -> { if (previewing) stopPreview(); else startPreview(BeatModel.DRUMS); });
+            rhyBtn.setOnClickListener(v -> { if (previewing) stopPreview(); else startPreview(1 << BeatModel.DRUMS, true); });
             root.addView(rhyBtn, new LinearLayout.LayoutParams(-1, -2));
         }
 
@@ -245,7 +245,9 @@ public class LiveActivity extends Activity {
         heldAt.clear();
         final int bar = BeatRenderer.samplesPerBar(m), beatS = bar / m.beatsPerBar;
         recN = Math.max(1, Math.min(LENS[lenIdx], m.bars - startBar));
-        float[] body = BeatRenderer.renderBars(m, startBar, startBar + recN, -2 - inst);
+        // pendant l'enregistrement on n'entend que la batterie (et le métronome) : pas les autres instruments
+        float[] body = inst == BeatModel.DRUMS ? new float[0]
+                : BeatRenderer.renderMask(m, startBar, startBar + recN, 1 << BeatModel.DRUMS);
         float[] back = new float[bar * (recN + 1)];
         System.arraycopy(body, 0, back, bar, Math.min(body.length, bar * recN));
         for (int k = 0; k < m.beatsPerBar; k++) addClick(back, k * beatS, k == 0);
@@ -334,18 +336,19 @@ public class LiveActivity extends Activity {
     }
 
     // ---------------- Écoute de la boucle ----------------
-    private void startPreview() { startPreview(-1); }
+    /** Écoute de la boucle : l'instrument en cours + la batterie, rien d'autre. */
+    private void startPreview() { startPreview(BeatRenderer.composeMask(inst, true), false); }
 
-    private void startPreview(int only) {
+    private void startPreview(int mask, boolean rhythmOnly) {
         if (recording) return;
         final int bar = BeatRenderer.samplesPerBar(m);
         int n = Math.max(1, Math.min(LENS[lenIdx], m.bars - startBar));
-        float[] body = BeatRenderer.renderBars(m, startBar, startBar + n, only);
+        float[] body = BeatRenderer.renderMask(m, startBar, startBar + n, mask);
         float[] loop = new float[bar * n];
         System.arraycopy(body, 0, loop, 0, Math.min(body.length, loop.length));
         mixer.startBacking(loop, true, null);
         previewing = true;
-        if (only == BeatModel.DRUMS && rhyBtn != null) rhyBtn.setText("■ Stop le rythme");
+        if (rhythmOnly && rhyBtn != null) rhyBtn.setText("■ Stop le rythme");
         else playBtn.setText("■ Stop");
     }
 

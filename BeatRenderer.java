@@ -56,15 +56,26 @@ public final class BeatRenderer {
         return renderBars(m, 0, Math.max(1, Math.min(m.bars, BeatModel.MAXBARS)), -1);
     }
 
-    private static boolean sel(int only, int t) {
-        if (only == -1) return true;
-        if (only >= 0) return only == t;
-        return t != -2 - only;
+    /** Masque « tous les instruments ». Un instrument t est dans le masque si (mask >> t) & 1. */
+    public static final int ALL = (1 << BeatModel.NT) - 1;
+
+    /** Masque pour composer l'instrument inst : on n'entend que lui et la batterie. */
+    public static int composeMask(int inst, boolean withDrums) {
+        return (1 << inst) | ((withDrums || inst == BeatModel.DRUMS) ? (1 << BeatModel.DRUMS) : 0);
     }
 
-    /** Une mesure seule (pour écouter ce qu'on compose) : length = samplesPerBar. */
-    public static float[] renderBar(BeatModel m, int bar, int onlyInst) {
-        return renderBars(m, bar, bar + 1, onlyInst);
+    /** Ancienne notation : -1 = tout, t >= 0 = piste t seule, -2 - t = tout sauf la piste t. */
+    private static int maskOf(int only) {
+        if (only == -1) return ALL;
+        if (only >= 0) return 1 << only;
+        return ALL & ~(1 << (-2 - only));
+    }
+
+    private static boolean sel(int mask, int t) { return ((mask >> t) & 1) != 0; }
+
+    /** Une mesure seule (pour écouter ce qu'on compose) : length = samplesPerBar. mask = instruments entendus. */
+    public static float[] renderBar(BeatModel m, int bar, int mask) {
+        return renderMask(m, bar, bar + 1, mask);
     }
 
     /** Joue les notes libres d'une mesure pour une piste. */
@@ -86,6 +97,11 @@ public final class BeatRenderer {
 
     /** only : -1 = tout, t >= 0 = piste t seule, -2 - t = tout sauf la piste t. */
     public static float[] renderBars(BeatModel m, int from, int to, int only) {
+        return renderMask(m, from, to, maskOf(only));
+    }
+
+    /** Rend les mesures from..to-1 avec seulement les instruments du masque. */
+    public static float[] renderMask(BeatModel m, int from, int to, int only) {
         int spb = m.stepsPerBar();
         double sl = stepLen(m);
         int total = (int) Math.round((to - from) * spb * sl);
@@ -144,7 +160,15 @@ public final class BeatRenderer {
                     if (!on[s]) continue;
                     int pos = (int) Math.round(((bar - from) * spb + s) * sl);
                     float vel = (s % 4 == 0) ? 1f : 0.82f;
-                    if (style == 0) {
+                    if (style >= 4) {
+                        int len = (int) Math.round(span(on, s, spb, 6) * sl * 1.2);
+                        if (style == 4)
+                            for (int t : tones)
+                                add(out, note(cache, BeatModel.PIANO, pbase - 12 + t, (int) Math.round(span(on, s, spb, 8) * sl * 0.97)),
+                                        pos, 0.6f * m.vol[BeatModel.PIANO]);
+                        add(out, note(cache, BeatModel.PIANO, m.pianoMelodyNote(bar, count), len), pos, vel * m.vol[BeatModel.PIANO] * 1.3f);
+                        count++;
+                    } else if (style == 0) {
                         int len = (int) Math.round(span(on, s, spb, 8) * sl * 0.97);
                         for (int t : tones)
                             add(out, note(cache, BeatModel.PIANO, pbase + t, len), pos, vel * m.vol[BeatModel.PIANO]);
@@ -184,13 +208,37 @@ public final class BeatRenderer {
         return out;
     }
 
-    /** Beat + sons ajoutés (enregistrés ou importés). */
+    /** Chaque instrument seul (batterie, basse, piano, solo), avec son volume de composition. */
+    public static float[][] renderStems(BeatModel m) {
+        int n = Math.max(1, Math.min(m.bars, BeatModel.MAXBARS));
+        float[][] st = new float[BeatModel.NT][];
+        for (int t = 0; t < BeatModel.NT; t++) st[t] = renderBars(m, 0, n, t);
+        return st;
+    }
+
+    /** Beat tel que réglé dans la table de mixage (niveau et coupure de chaque instrument). */
+    public static float[] renderMixedBeat(BeatModel m) {
+        float[][] st = renderStems(m);
+        int len = 0;
+        for (float[] a : st) len = Math.max(len, a.length);
+        float[] o = new float[len];
+        for (int t = 0; t < BeatModel.NT; t++) {
+            if (m.mixMute[t]) continue;
+            float g = m.mixGain[t];
+            for (int i = 0; i < st[t].length; i++) o[i] += st[t][i] * g;
+        }
+        return o;
+    }
+
+    /** Beat + sons ajoutés (enregistrés ou importés), avec les réglages de la table de mixage. */
     public static float[] mixAll(BeatModel m, File dir, boolean includeBeat, boolean includeClips) {
-        float[] beat = includeBeat ? renderBeat(m) : new float[0];
+        float[] beat = includeBeat ? renderMixedBeat(m) : new float[0];
         int perBar = samplesPerBar(m);
         List<BeatModel.Clip> clips = m.clips;
         short[][] pcm = new short[clips.size()][];
         int[] start = new int[clips.size()];
+        int[] from = new int[clips.size()];
+        int[] used = new int[clips.size()];
         int end = beat.length;
         if (includeClips) {
             for (int i = 0; i < clips.size(); i++) {
@@ -199,8 +247,11 @@ public final class BeatRenderer {
                 try {
                     WavIO.Mono w = WavIO.readWav(new File(dir, c.file), 60 * 60 * WavIO.RATE);
                     pcm[i] = w.rate == WavIO.RATE ? w.data : WavIO.resample(w.data, w.len, w.rate, WavIO.RATE);
-                    start[i] = Math.max(0, c.startBar) * perBar;
-                    end = Math.max(end, start[i] + pcm[i].length);
+                    int n = w.rate == WavIO.RATE ? w.len : pcm[i].length;
+                    from[i] = Math.max(0, Math.min(c.cutIn, n));
+                    used[i] = c.used(n);
+                    start[i] = c.start(perBar);
+                    end = Math.max(end, start[i] + used[i]);
                 } catch (Exception ignored) {
                     pcm[i] = null;
                 }
@@ -211,10 +262,21 @@ public final class BeatRenderer {
             if (pcm[i] == null) continue;
             float g = clips.get(i).vol / 32768f;
             short[] p = pcm[i];
-            int st = start[i];
-            for (int k = 0; k < p.length; k++) out[st + k] += p[k] * g;
+            int st = start[i], f0 = from[i];
+            for (int k = 0; k < used[i]; k++) out[st + k] += p[f0 + k] * g;
         }
+        if (includeBeat && m.masterGain != 1f) for (int i = 0; i < out.length; i++) out[i] *= m.masterGain;
         return out;
+    }
+
+    /** Écrit composition.wav (tous les instruments, sans voix) dans dir. Renvoie le nombre de samples. */
+    public static int writeComposition(BeatModel m, File dir) throws java.io.IOException {
+        float[] f = renderBeat(m);
+        short[] s = toShorts(f);
+        f = null;
+        int len = Math.min(s.length, totalSamples(m));
+        WavIO.writeMono16(new File(dir, "composition.wav"), s, len);
+        return len;
     }
 
     /** Ajoute une mesure de clics au début (décompte avant l'enregistrement). */

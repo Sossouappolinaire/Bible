@@ -88,6 +88,11 @@ public final class StudioStore {
             JSONArray vol = new JSONArray();
             for (float v : m.vol) vol.put((double) v);
             o.put("vol", vol);
+            JSONArray mg = new JSONArray();
+            for (int t = 0; t < BeatModel.NT; t++) mg.put((double) m.mixGain[t]);
+            o.put("mixGain", mg);
+            o.put("mixMute", bools(m.mixMute));
+            o.put("masterGain", (double) m.masterGain);
             JSONArray cl = new JSONArray();
             for (BeatModel.Clip k : m.clips) {
                 JSONObject co = new JSONObject();
@@ -95,6 +100,9 @@ public final class StudioStore {
                 co.put("name", k.name);
                 co.put("file", k.file);
                 co.put("start", k.startBar);
+                co.put("off", k.offset);
+                co.put("in", k.cutIn);
+                co.put("use", k.cutLen);
                 co.put("vol", (double) k.vol);
                 co.put("mute", k.mute);
                 co.put("samples", k.samples);
@@ -167,6 +175,12 @@ public final class StudioStore {
             if (vol != null)
                 for (int i = 0; i < BeatModel.NT && i < vol.length(); i++)
                     m.vol[i] = (float) Math.max(0, Math.min(1, vol.optDouble(i, m.vol[i])));
+            JSONArray mg = o.optJSONArray("mixGain");
+            if (mg != null)
+                for (int i = 0; i < BeatModel.NT && i < mg.length(); i++)
+                    m.mixGain[i] = (float) Math.max(0, Math.min(2, mg.optDouble(i, 1)));
+            readBools(o.optJSONArray("mixMute"), m.mixMute);
+            m.masterGain = (float) Math.max(0, Math.min(2, o.optDouble("masterGain", 1)));
             JSONArray cl = o.optJSONArray("clips");
             if (cl != null) {
                 for (int i = 0; i < cl.length(); i++) {
@@ -177,10 +191,16 @@ public final class StudioStore {
                     k.name = co.optString("name", "Son " + (i + 1));
                     k.file = co.optString("file", "");
                     k.startBar = clamp(co.optInt("start", 0), 0, BeatModel.MAXBARS - 1);
+                    k.offset = co.optInt("off", -1);
+                    if (k.offset < -1) k.offset = -1;
+                    k.cutIn = Math.max(0, co.optInt("in", 0));
+                    k.cutLen = Math.max(0, co.optInt("use", 0));
                     k.vol = (float) Math.max(0, Math.min(2, co.optDouble("vol", 1)));
                     k.mute = co.optBoolean("mute", false);
                     k.samples = co.optInt("samples", 0);
-                    if (!k.file.isEmpty() && new File(new File(root(c), id), k.file).exists()) m.clips.add(k);
+                    if (k.file.isEmpty() || !new File(new File(root(c), id), k.file).exists()) continue;
+                    if (isDuplicateClip(m, k)) continue;      // jamais deux fois le même son au même endroit
+                    m.clips.add(k);
                 }
             }
             m.style = clamp(o.optInt("style", -1), -1, Styles.COUNT - 1);
@@ -267,8 +287,65 @@ public final class StudioStore {
         } catch (Exception ex) {
             ok = false;
         }
-        if (!ok || load(c, id) == null) { delete(c, id); return null; }
+        BeatModel imp = ok ? load(c, id) : null;
+        if (imp == null) { delete(c, id); return null; }
+        // Déjà importé ? On rouvre le projet existant au lieu d'en créer un deuxième identique.
+        int fp = fingerprint(imp);
+        for (String[] p : list(c)) {
+            if (p[0].equals(id)) continue;
+            BeatModel o = load(c, p[0]);
+            if (o != null && o.name.equals(imp.name) && fingerprint(o) == fp && o.clips.size() == imp.clips.size()) {
+                delete(c, id);
+                return p[0];
+            }
+        }
         return id;
+    }
+
+    /** Même identifiant, ou même fichier posé exactement au même endroit avec la même coupe : c'est un doublon. */
+    private static boolean isDuplicateClip(BeatModel m, BeatModel.Clip k) {
+        for (BeatModel.Clip o : m.clips) {
+            if (o.id.equals(k.id)) return true;
+            if (o.file.equals(k.file) && o.startBar == k.startBar && o.offset == k.offset
+                    && o.cutIn == k.cutIn && o.cutLen == k.cutLen) return true;
+        }
+        return false;
+    }
+
+    /** Nom de projet qui n'existe pas déjà (« Mon beat », « Mon beat 2 », …). */
+    public static String uniqueName(Context c, String base, String exceptId) {
+        List<String[]> all = list(c);
+        String b = base == null || base.trim().isEmpty() ? "Mon beat" : base.trim();
+        String name = b;
+        int n = 1;
+        boolean used = true;
+        while (used) {
+            used = false;
+            for (String[] p : all) {
+                if (p[0].equals(exceptId)) continue;
+                if (p[1].trim().equalsIgnoreCase(name)) { used = true; n++; name = b + " " + n; break; }
+            }
+        }
+        return name;
+    }
+
+    /** Efface les fichiers de sons (cNNN.wav) que plus aucun son du projet n'utilise (seulement ceux créés avant « before »). */
+    public static void purgeUnused(Context c, BeatModel m, long before) {
+        File[] fs = dirOf(c, m.id).listFiles();
+        if (fs == null) return;
+        for (File f : fs) {
+            String n = f.getName();
+            if (!n.matches("c\\d+\\.wav")) continue;
+            if (m.usesOfFile(n) == 0 && f.lastModified() < before) f.delete();
+        }
+    }
+
+    /** Empreinte du projet entier (composition + sons placés) : sert à reconnaître un projet déjà importé. */
+    public static int fingerprint(BeatModel m) {
+        int h = sig(m);
+        for (BeatModel.Clip k : m.clips)
+            h = h * 31 + (k.name.hashCode() + 7 * k.samples + 131 * k.offset + 1031 * k.cutIn + 8191 * k.cutLen + 65537 * k.startBar);
+        return h;
     }
 
     /** Empreinte de tout ce qui s'entend dans la composition (sans les sons enregistrés ni le nom). */

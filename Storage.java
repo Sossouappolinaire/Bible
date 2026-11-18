@@ -28,7 +28,9 @@ public final class Storage {
     private Storage() {}
 
     public static File dir(Context c) {
-        File base = c.getExternalFilesDir(FOLDER);
+        // Dossier « KouameAp » (survit à la désinstallation) dès qu'il est autorisé et prêt ; sinon dossier interne de l'application
+        File racine = KouameAp.pret(c) ? KouameAp.racine(c) : null;
+        File base = racine != null ? new File(racine, "enregistrements") : c.getExternalFilesDir(FOLDER);
         if (base == null) base = new File(c.getFilesDir(), FOLDER);
         if (!base.exists()) base.mkdirs();
         return base;

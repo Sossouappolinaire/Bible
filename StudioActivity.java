@@ -72,7 +72,7 @@ public class StudioActivity extends Activity {
     private Spinner sigSpin, keySpin, progSpin;
     private LinearLayout chordBox, arrBox, editorBox, clipsBox;
     private final Button[] tabBtns = new Button[4];
-    private Button playBtn, recBtn, mixBtn;
+    private Button recBtn, mixBtn;
     private TextView[] barHeads = new TextView[0];
     private int tab = 0;
     private Button durBtn, compBtn, styleBtn;
@@ -241,7 +241,7 @@ public class StudioActivity extends Activity {
         back.setOnClickListener(v -> finish());
         root.addView(back);
         root.addView(Ui.text(this, "Studio", 24, Ui.TEXT, true));
-        TextView sub = Ui.text(this, "1. Composez   2. Terminez la composition   3. Enregistrez la voix   4. Exportez", 13, Ui.MUTED, false);
+        TextView sub = Ui.text(this, "1. Composez chaque instrument   2. Composition instrument général   3. Enregistrez la voix   4. Mixez et exportez", 13, Ui.MUTED, false);
         sub.setPadding(0, 0, 0, Ui.dp(this, 14));
         root.addView(sub);
 
@@ -376,25 +376,21 @@ public class StudioActivity extends Activity {
         ic.addView(editorBox);
         root.addView(ic);
 
-        // --- Lecture / enregistrement
-        LinearLayout stc = card("Étape 2 : terminer la composition");
+        // --- Composition instrument général
+        LinearLayout stc = card("Étape 2 : composition instrument général");
         stepText = Ui.text(this, "", 13, Ui.TEXT, false);
         stepText.setPadding(0, 0, 0, Ui.dp(this, 8));
         stc.addView(stepText);
-        compBtn = Ui.button(this, "✔ Terminer la composition", Ui.GREEN);
+        compBtn = Ui.button(this, "🎼 Composition instrument général", Ui.GREEN);
         compBtn.setTextColor(Color.BLACK);
-        compBtn.setOnClickListener(v -> { if (m.composed) reopenComposition(); else finishComposition(); });
+        compBtn.setOnClickListener(v -> openGeneralComposition());
         stc.addView(compBtn);
-        stc.addView(hint("Une fois terminée, la composition est enregistrée dans le projet. "
-                + "Ensuite tu enregistres la voix : la composition joue en entier pendant que tu chantes, du début à la fin."));
+        stc.addView(hint("Quand tu composes un instrument, tu n'entends que lui et la batterie. "
+                + "Ici tu entends tous les instruments ensemble, sans la voix : tu corriges si besoin, puis tu envoies la composition au mixage. "
+                + "C'est ensuite que tu enregistres la voix de la chanson dessus."));
         root.addView(stc);
 
         LinearLayout pl = card("Étape 3 : enregistrer la voix");
-        playBtn = Ui.button(this, "▶ Écouter le beat", 0xFF1E8449);
-        playBtn.setOnClickListener(v -> {
-            if (mode == BEAT) stopAll(); else startPlayback(BEAT, null);
-        });
-        pl.addView(playBtn, lp(-1, -2, 0, Ui.dp(this, 10), 0, 0));
         timeText = Ui.text(this, "0:00", 28, Ui.TEXT, true);
         timeText.setGravity(Gravity.CENTER);
         timeText.setPadding(0, Ui.dp(this, 10), 0, 0);
@@ -431,48 +427,72 @@ public class StudioActivity extends Activity {
         pl.addView(syncSeek);
         updateSyncLabel();
 
+        final TextView recVolLbl = label("");
+        pl.addView(recVolLbl);
+        SeekBar recVol = new SeekBar(this);
+        recVol.setMax(100);
+        recVol.setProgress(prefs.getInt("rec_beat", 45));
+        recVolLbl.setText("Volume de la musique pendant l'enregistrement : " + prefs.getInt("rec_beat", 45) + " %");
+        recVol.setOnSeekBarChangeListener(new Seek(p -> {
+            prefs.edit().putInt("rec_beat", p).apply();
+            recVolLbl.setText("Volume de la musique pendant l'enregistrement : " + p + " %");
+        }));
+        pl.addView(recVol);
+        pl.addView(hint("Baisse la musique pour mieux entendre ta voix. Cela ne change pas le mix final : le mixage se règle dans le Studio de mixage (étape 4)."));
+
         recBtn = Ui.button(this, "● Enregistrer la voix", Ui.RED);
         recBtn.setOnClickListener(v -> {
             if (mode == REC) stopAll();
-            else if (!compReady()) toast("Terminez d'abord la composition (étape 2)");
+            else if (!compReady()) toast("Envoie d'abord la composition au mixage (étape 2)");
             else startPlayback(REC, null);
         });
         pl.addView(recBtn, lp(-1, -2, 0, Ui.dp(this, 12), 0, 0));
         pl.addView(hint("Mettez un casque : sinon le micro reprend le beat du haut-parleur. "
-                + "La composition terminée joue en entier, du début à la fin. À l'arrêt ou à la fin, ta voix est ajoutée au mix. "
+                + "La composition joue en entier, du début à la fin. À l'arrêt ou à la fin, ta voix est ajoutée aux sons, "
+                + "et tu peux la placer et la couper sur la durée. "
                 + "Si votre voix est en retard ou en avance sur le beat, réglez la synchronisation."));
         root.addView(pl);
 
         // --- Sons ajoutés
-        LinearLayout sc = card("Sons ajoutés (enregistrés ou importés)");
+        LinearLayout sc = card("Sons ajoutés (voix enregistrée ou importée)");
         Button impBtn = Ui.button(this, "＋ Importer un audio (mp3, amr, wav…)", 0xFF2C3A4A);
         impBtn.setOnClickListener(v -> pickAudio());
         sc.addView(impBtn, lp(-1, -2, 0, Ui.dp(this, 10), 0, 0));
+        Button editBtn = Ui.button(this, "✂ Placer, couper, redimensionner sur la durée", 0xFF2B6CB0);
+        editBtn.setOnClickListener(v -> openClipEditor());
+        sc.addView(editBtn, lp(-1, -2, 0, Ui.dp(this, 8), 0, 0));
+        sc.addView(hint("Place chaque son n'importe où sur la durée du morceau, raccourcis-le ou coupe-le en deux."));
         clipsBox = new LinearLayout(this);
         clipsBox.setOrientation(LinearLayout.VERTICAL);
         sc.addView(clipsBox);
         root.addView(sc);
 
-        // --- Mixage final
-        LinearLayout mc = card("Mixage final");
+        // --- Mixage et export (un seul bloc)
+        LinearLayout mx = card("Étape 4 : mixage et export");
+        mx.addView(hint("Une piste séparée pour la batterie, la basse, le piano, le solo et chaque voix : "
+                + "monte, baisse, coupe ou écoute seule chaque piste, avec un indicateur de niveau."));
+        Button mixerBtn = Ui.button(this, "🎚 Ouvrir le studio de mixage", 0xFF2B6CB0);
+        mixerBtn.setOnClickListener(v -> {
+            stopAll();
+            flushSave();
+            needReload = true;
+            Intent it = new Intent(this, MixerActivity.class);
+            it.putExtra("id", m.id);
+            startActivity(it);
+        });
+        mx.addView(mixerBtn, lp(-1, -2, 0, Ui.dp(this, 8), 0, 0));
         mixBtn = Ui.button(this, "▶ Écouter le mix", 0xFF1E8449);
         mixBtn.setOnClickListener(v -> {
             if (mode == MIX) stopAll(); else startPlayback(MIX, null);
         });
-        mc.addView(mixBtn, lp(-1, -2, 0, Ui.dp(this, 10), 0, 0));
+        mx.addView(mixBtn, lp(-1, -2, 0, Ui.dp(this, 8), 0, 0));
         Button expBtn = Ui.button(this, "Exporter le mix…", Ui.ACCENT);
         expBtn.setTextColor(Color.BLACK);
         expBtn.setOnClickListener(v -> exportDialog());
-        mc.addView(expBtn, lp(-1, -2, 0, Ui.dp(this, 8), 0, 0));
-        Button pexp = Ui.button(this, "Exporter le projet (fichier)", OFF);
-        pexp.setOnClickListener(v -> startProjectExport(m.id, m.name));
-        mc.addView(pexp, lp(-1, -2, 0, Ui.dp(this, 8), 0, 0));
-        Button pimp = Ui.button(this, "Importer un projet", OFF);
-        pimp.setOnClickListener(v -> pickProject());
-        mc.addView(pimp, lp(-1, -2, 0, Ui.dp(this, 8), 0, 0));
-        mc.addView(hint("Le mix = le beat + tous les sons ajoutés. Pour modifier : supprimez un son (✕), changez le beat, "
-                + "puis réenregistrez. L'export est aussi visible dans l'écran « Enregistrer »."));
-        root.addView(mc);
+        mx.addView(expBtn, lp(-1, -2, 0, Ui.dp(this, 8), 0, 0));
+        mx.addView(hint("Le mix = la composition + tous les sons ajoutés, tels qu'ils sont placés. Pour modifier : place ou coupe un son, "
+                + "supprime-le (✕), ou corrige la composition. L'export est aussi visible dans l'écran « Enregistrer »."));
+        root.addView(mx);
 
         setContentView(sv);
     }
@@ -570,66 +590,36 @@ public class StudioActivity extends Activity {
     private void refreshSteps() {
         if (m.composed && compReady()) {
             int s = m.compSamples / Synth.RATE;
-            stepText.setText("✔ Composition enregistrée (" + s / 60 + ":" + String.format(Locale.US, "%02d", s % 60)
-                    + "). Tu peux maintenant enregistrer la voix.");
-            compBtn.setText("Rouvrir la composition");
+            stepText.setText("✔ Composition envoyée au mixage (" + s / 60 + ":" + String.format(Locale.US, "%02d", s % 60)
+                    + "). Tu peux maintenant enregistrer la voix, puis mixer.");
+            compBtn.setText("🎼 Composition instrument général (corriger)");
             compBtn.setBackground(Ui.rounded(OFF, Ui.dp(this, 14)));
             compBtn.setTextColor(Color.WHITE);
         } else {
-            stepText.setText(m.composed ? "⚠ La composition a changé depuis : termine-la de nouveau pour enregistrer la voix."
-                    : "Compose avec la batterie, la basse, le piano et le solo, puis appuie sur Terminer.");
-            compBtn.setText("✔ Terminer la composition");
+            stepText.setText(m.composed ? "⚠ La composition a changé depuis : ouvre la composition instrument général et envoie-la de nouveau au mixage."
+                    : "Compose la batterie, la basse, le piano et le solo. Quand tout est prêt, ouvre la composition instrument général.");
+            compBtn.setText("🎼 Composition instrument général");
             compBtn.setBackground(Ui.rounded(Ui.GREEN, Ui.dp(this, 14)));
             compBtn.setTextColor(Color.BLACK);
         }
     }
 
-    private void finishComposition() {
-        if (renderBusy) return;
+    private void openGeneralComposition() {
         stopAll();
         flushSave();
-        renderBusy = true;
-        setStatus("Enregistrement de la composition…");
-        updateButtons();
-        final BeatModel mm = m;
-        new Thread(() -> {
-            String err = null;
-            int len = 0;
-            try {
-                float[] f = BeatRenderer.renderBeat(mm);
-                short[] s = BeatRenderer.toShorts(f);
-                f = null;
-                len = Math.min(s.length, BeatRenderer.totalSamples(mm));
-                WavIO.writeMono16(new File(StudioStore.dirOf(this, mm.id), "composition.wav"), s, len);
-            } catch (Throwable e) {
-                err = String.valueOf(e.getMessage());
-            }
-            final String ferr = err;
-            final int flen = len;
-            ui.post(() -> {
-                renderBusy = false;
-                setStatus("");
-                if (ferr == null && mm == m) {
-                    m.composed = true;
-                    m.compSamples = flen;
-                    m.compSig = StudioStore.sig(m);
-                    flushSave();
-                    toast("Composition enregistrée. Tu peux enregistrer la voix.");
-                } else if (ferr != null) toast("Impossible : " + ferr);
-                refreshSteps();
-                updateButtons();
-            });
-        }).start();
+        needReload = true;
+        Intent it = new Intent(this, FullCompActivity.class);
+        it.putExtra("id", m.id);
+        startActivity(it);
     }
 
-    private void reopenComposition() {
+    private void openClipEditor() {
         stopAll();
-        compFile().delete();
-        m.composed = false;
-        m.compSamples = 0;
         flushSave();
-        refreshSteps();
-        toast("Composition rouverte : modifie-la puis termine-la à nouveau");
+        needReload = true;
+        Intent it = new Intent(this, ClipEditorActivity.class);
+        it.putExtra("id", m.id);
+        startActivity(it);
     }
 
     private void changeBars(int d) {
@@ -888,7 +878,8 @@ public class StudioActivity extends Activity {
                     }
                 }, null, null));
                 editorBox.addView(hint("Case allumée : le piano joue l'accord de la mesure. Case éteinte : pause. "
-                        + "Le style choisit comment l'accord est joué (plaqué ou arpège)."));
+                        + "Le style choisit comment : accords plaqués, arpège, ou mélodie à la main droite. "
+                        + "Le piano joue les accords ; la mélodie principale est le Solo (autre instrument, autre son)."));
                 break;
 
             default:
@@ -977,9 +968,10 @@ public class StudioActivity extends Activity {
     private void rebuildClips() {
         clipsBox.removeAllViews();
         if (m.clips.isEmpty()) {
-            clipsBox.addView(hint("Aucun son pour l'instant. Enregistrez sur le beat ou importez un fichier audio."));
+            clipsBox.addView(hint("Aucun son pour l'instant. Enregistrez sur la composition ou importez un fichier audio."));
             return;
         }
+        final int perBar = BeatRenderer.samplesPerBar(m);
         for (final BeatModel.Clip c : m.clips) {
             LinearLayout box = new LinearLayout(this);
             box.setOrientation(LinearLayout.VERTICAL);
@@ -990,7 +982,9 @@ public class StudioActivity extends Activity {
             info.setOrientation(LinearLayout.VERTICAL);
             info.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1f));
             info.addView(Ui.text(this, c.name, 14, c.mute ? Ui.MUTED : Ui.TEXT, true));
-            info.addView(Ui.text(this, fmtDur(c.samples) + (c.mute ? " · coupé" : ""), 12, Ui.MUTED, false));
+            int used = c.used(c.samples);
+            info.addView(Ui.text(this, "Début " + fmtTime(c.start(perBar)) + " · durée " + fmtDur(used)
+                    + (c.isWhole() ? "" : " · coupé") + (c.mute ? " · coupé du mix" : ""), 12, Ui.MUTED, false));
             boolean playing = mode == CLIP && c.id.equals(playingClipId);
             Button play = mini(playing ? "■" : "▶", playing ? Ui.ORANGE : Ui.GREEN);
             play.setOnClickListener(v -> {
@@ -1005,23 +999,6 @@ public class StudioActivity extends Activity {
             r1.addView(mute, lp(-2, -2, Ui.dp(this, 6), 0, 0, 0));
             r1.addView(del, lp(-2, -2, Ui.dp(this, 6), 0, 0, 0));
             box.addView(r1);
-
-            LinearLayout r2 = Ui.row(this);
-            r2.setPadding(0, Ui.dp(this, 6), 0, 0);
-            final TextView startLbl = Ui.text(this, "Début : mesure " + (c.startBar + 1), 12, Ui.MUTED, false);
-            startLbl.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1f));
-            Button sm = mini("−", OFF);
-            sm.setOnClickListener(v -> {
-                if (c.startBar > 0) { c.startBar--; startLbl.setText("Début : mesure " + (c.startBar + 1)); changed(); }
-            });
-            Button sp = mini("+", OFF);
-            sp.setOnClickListener(v -> {
-                if (c.startBar < m.bars - 1) { c.startBar++; startLbl.setText("Début : mesure " + (c.startBar + 1)); changed(); }
-            });
-            r2.addView(startLbl);
-            r2.addView(sm);
-            r2.addView(sp, lp(-2, -2, Ui.dp(this, 6), 0, 0, 0));
-            box.addView(r2);
 
             LinearLayout r3 = Ui.row(this);
             r3.setPadding(0, Ui.dp(this, 6), 0, 0);
@@ -1057,6 +1034,12 @@ public class StudioActivity extends Activity {
         }
     }
 
+    private String fmtTime(int samples) {
+        double sec = samples / (double) Synth.RATE;
+        int mi = (int) (sec / 60);
+        return String.format(Locale.US, "%d:%04.1f", mi, sec - mi * 60);
+    }
+
     private String playingClipId = "";
 
     private void confirmDeleteClip(final BeatModel.Clip c) {
@@ -1065,7 +1048,7 @@ public class StudioActivity extends Activity {
                 .setPositiveButton("Supprimer", (d, w) -> {
                     stopAll();
                     m.clips.remove(c);
-                    new File(StudioStore.dirOf(this, m.id), c.file).delete();
+                    if (m.usesOfFile(c.file) == 0) new File(StudioStore.dirOf(this, m.id), c.file).delete();
                     rebuildClips();
                     flushSave();
                 })
@@ -1257,6 +1240,9 @@ public class StudioActivity extends Activity {
                 nc.file = f.getName();
                 nc.samples = out.length;
                 nc.startBar = src.startBar;
+                nc.offset = src.offset;
+                nc.cutIn = src.cutIn;
+                nc.cutLen = src.cutLen;
                 nc.vol = src.vol;
             } catch (Throwable e) {
                 err = String.valueOf(e.getMessage());
@@ -1267,6 +1253,9 @@ public class StudioActivity extends Activity {
                 aiBusy = false;
                 setStatus("");
                 if (fc == null) { toast("Nettoyage impossible : " + ferr); return; }
+                // la version nettoyée remplace l'originale dans le mix (on ne l'entend pas en double) ;
+                // l'originale est gardée, coupée du mix : on peut la réactiver avec 🔇
+                src.mute = true;
                 if (m == mm) {
                     mm.clips.add(mm.clips.indexOf(src) + 1, fc);
                     rebuildClips();
@@ -1275,7 +1264,7 @@ public class StudioActivity extends Activity {
                     mm.clips.add(fc);
                     StudioStore.save(this, mm);
                 }
-                toast("Son nettoyé ajouté : écoute-le avec ▶ et compare avec l'original");
+                toast("Son nettoyé ajouté ; l'original est coupé du mix pour ne pas l'entendre en double");
             });
         }, "ai-clean").start();
     }
@@ -1284,13 +1273,10 @@ public class StudioActivity extends Activity {
     // Lecture
     // ------------------------------------------------------------------
     private void updateButtons() {
-        playBtn.setText(mode == BEAT ? "■ Arrêter" : "▶ Écouter le beat");
-        playBtn.setBackground(Ui.rounded(mode == BEAT ? Ui.ORANGE : 0xFF1E8449, Ui.dp(this, 14)));
         recBtn.setText(mode == REC ? "■ Stop (mixer)" : "● Enregistrer la voix");
         recBtn.setBackground(Ui.rounded(mode == REC ? 0xFF7F1D1D : Ui.RED, Ui.dp(this, 14)));
         mixBtn.setText(mode == MIX ? "■ Arrêter" : "▶ Écouter le mix");
         mixBtn.setBackground(Ui.rounded(mode == MIX ? Ui.ORANGE : 0xFF1E8449, Ui.dp(this, 14)));
-        playBtn.setEnabled(!renderBusy);
         recBtn.setEnabled(!renderBusy);
         mixBtn.setEnabled(!renderBusy);
         if (mode == IDLE) { timeText.setText("0:00"); highlightBar(-1); }
@@ -1304,7 +1290,7 @@ public class StudioActivity extends Activity {
         mode = IDLE;
         playingClipId = "";
         if (p != null) p.stop();
-        if (playBtn != null) { updateButtons(); rebuildClipsIfReady(); }
+        if (mixBtn != null) { updateButtons(); rebuildClipsIfReady(); }
     }
 
     private void rebuildClipsIfReady() { if (clipsBox != null && m != null) rebuildClips(); }
@@ -1330,7 +1316,10 @@ public class StudioActivity extends Activity {
                 File dir = StudioStore.dirOf(this, mm.id);
                 if (kind == CLIP) {
                     WavIO.Mono w = WavIO.readWav(new File(dir, only.file), 60 * 60 * WavIO.RATE);
-                    buf = w.rate == WavIO.RATE ? w.data : WavIO.resample(w.data, w.len, w.rate, WavIO.RATE);
+                    short[] all = w.rate == WavIO.RATE ? w.data : WavIO.resample(w.data, w.len, w.rate, WavIO.RATE);
+                    int alln = w.rate == WavIO.RATE ? w.len : all.length;
+                    int from = Math.max(0, Math.min(only.cutIn, alln));
+                    buf = java.util.Arrays.copyOfRange(all, from, from + only.used(alln));
                 } else {
                     float[] f;
                     if (kind == BEAT) {
@@ -1352,6 +1341,8 @@ public class StudioActivity extends Activity {
                         } else {
                             f = BeatRenderer.mixAll(mm, dir, true, hear);
                         }
+                        float rg = prefs.getInt("rec_beat", 45) / 100f;
+                        for (int i = 0; i < f.length; i++) f[i] *= rg;
                         if (countIn) {
                             f = BeatRenderer.withCountIn(mm, f);
                             pre = BeatRenderer.countInSamples(mm);
@@ -1571,8 +1562,9 @@ public class StudioActivity extends Activity {
                 if (mm == m) rebuildClips();
                 if (!isFinishing()) {
                     dialog("Enregistrement terminé")
-                            .setMessage("Votre enregistrement est mélangé au beat. Voulez-vous écouter le mix ?")
-                            .setPositiveButton("Écouter le mix", (d, w) -> startPlayback(MIX, null))
+                            .setMessage("Ta voix est ajoutée aux sons. Tu peux la placer, la couper ou la raccourcir sur la durée, ou écouter le mix.")
+                            .setPositiveButton("Placer / couper", (d, w) -> openClipEditor())
+                            .setNeutralButton("Écouter le mix", (d, w) -> startPlayback(MIX, null))
                             .setNegativeButton("Plus tard", null)
                             .show();
                 }
@@ -1657,11 +1649,23 @@ public class StudioActivity extends Activity {
                     toast("Import impossible : " + ferr);
                     return;
                 }
+                if (mm.findSame(name, fc.samples) != null) {
+                    // même nom, même durée : déjà dans le projet, on ne l'ajoute pas une deuxième fois
+                    new File(StudioStore.dirOf(this, mm.id), fc.file).delete();
+                    toast("« " + name + " » est déjà dans le projet : pas ajouté en double");
+                    return;
+                }
                 mm.clips.add(fc);
                 StudioStore.save(this, mm);
                 if (mm == m) rebuildClips();
-                toast(fc.samples >= AudioDecoder.MAX_SECONDS * Synth.RATE
-                        ? "Son ajouté (limité à 5 minutes)" : "Son ajouté au mix");
+                if (mm == m && !isFinishing()) {
+                    dialog("Son ajouté")
+                            .setMessage((fc.samples >= AudioDecoder.MAX_SECONDS * Synth.RATE ? "Limité à 5 minutes. " : "")
+                                    + "Tu peux le placer sur la durée du morceau, le couper ou le raccourcir.")
+                            .setPositiveButton("Placer / couper", (d, w) -> openClipEditor())
+                            .setNegativeButton("Plus tard", null)
+                            .show();
+                }
             });
         }).start();
     }
@@ -1805,6 +1809,7 @@ public class StudioActivity extends Activity {
         flushSave();
         m = Examples.build(idx);
         m.id = StudioStore.newId();
+        m.name = StudioStore.uniqueName(this, m.name, m.id);
         StudioStore.save(this, m);
         applyModelToUi();
         toast("Exemple chargé : modifiez-le comme vous voulez");
@@ -1869,7 +1874,7 @@ public class StudioActivity extends Activity {
         flushSave();
         m = BeatModel.create();
         m.id = StudioStore.newId();
-        m.name = "Mon beat";
+        m.name = StudioStore.uniqueName(this, "Mon beat", m.id);
         StudioStore.save(this, m);
         applyModelToUi();
         toast("Nouveau projet créé");

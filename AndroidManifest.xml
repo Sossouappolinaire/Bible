@@ -9,15 +9,22 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
-        android:maxSdkVersion="28" />
+        android:maxSdkVersion="29" />
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <!-- Dossier KouameAp à la racine du téléphone (conservé après désinstallation) -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
 
     <uses-feature
         android:name="android.hardware.microphone"
         android:required="false" />
 
     <application
+        android:name=".App"
+        android:icon="@mipmap/ic_launcher"
         android:label="TvKouame Studio"
-        tools:replace="android:label"
+        tools:replace="android:label,android:icon"
         android:allowBackup="true"
         android:largeHeap="true"
         android:requestLegacyExternalStorage="true"
@@ -46,7 +53,21 @@
             android:windowSoftInputMode="adjustPan" />
 
         <activity
+            android:name=".FullCompActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
+        <activity
+            android:name=".ClipEditorActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
+        <activity
             android:name=".LiveActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+        <activity
+            android:name=".MixerActivity"
             android:exported="false"
             android:screenOrientation="portrait" />
         <activity

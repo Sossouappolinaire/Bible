@@ -354,7 +354,9 @@ public class BibleActivity extends Activity {
         return v;
     }
 
-    void champ(EditText e) {
+    void champ(EditText e) { champ(e, box); }
+
+    void champ(EditText e, LinearLayout p) {
         e.setTextSize(16);
         e.setTextColor(0xFF2B2150);
         e.setHintTextColor(0xFF9A93B8);
@@ -366,7 +368,7 @@ public class BibleActivity extends Activity {
         e.setBackground(g);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         lp.setMargins(dp(4), dp(8), dp(4), dp(8));
-        box.addView(e, lp);
+        p.addView(e, lp);
     }
 
     Button b(String s, Runnable r) { return b(box, s, r); }
@@ -719,8 +721,11 @@ public class BibleActivity extends Activity {
     }
 
     // Versets proposés pour le thème (affichés avant le plan)
-    String versets(String th) throws Exception {
-        String user = "Thème ou sujet : " + th + "\n\nPropose de 6 à 8 versets bibliques réels (Louis Segond) qu'on peut utiliser pour ce thème. "
+    String versets(String th, String verset) throws Exception {
+        String user = "Thème ou sujet : " + th + "\n\n"
+            + (verset.isEmpty() ? "" : "Verset de base choisi par le prédicateur : " + verset + "\n\n")
+            + "Propose de 6 à 8 versets bibliques réels (Louis Segond) qu'on peut utiliser pour ce thème"
+            + (verset.isEmpty() ? "" : " (en lien avec ce verset de base, sans le répéter)") + ". "
             + "Un verset par ligne, au format : Livre chapitre:verset — l'idée du verset en quelques mots. Ne recopie pas le texte du verset, pas de numéro, rien d'autre.";
         String rep = ia(IA_SYSTEME_VERSETS, user, 40);
         StringBuilder sb = new StringBuilder();
@@ -736,8 +741,11 @@ public class BibleActivity extends Activity {
     }
 
     // Étape 1 : l'IA cherche elle-même les sous-titres propres au thème (le 1er = définition / ce qu'on sait du thème), la conclusion est ajoutée à la fin
-    String[] planifier(String th) throws Exception {
-        String user = "Thème ou sujet : " + th + "\n\nPropose exactement " + NB_SOUS_TITRES + " sous-titres pour une PRÉDICATION sur ce thème (pas une dissertation). "
+    String[] planifier(String th, String verset) throws Exception {
+        String user = "Thème ou sujet : " + th + "\n\n"
+            + (verset.isEmpty() ? "" : "Verset du thème (texte de base choisi par le prédicateur) : " + verset + "\n"
+                + "Appuie-toi sur ce verset pour trouver les sous-titres : le plan doit découler de ce verset et du thème.\n\n")
+            + "Propose exactement " + NB_SOUS_TITRES + " sous-titres pour une PRÉDICATION sur ce thème (pas une dissertation). "
             + "Le premier sous-titre porte sur la définition du thème ou ce que l'on sait du thème (par exemple « Définition »). "
             + "Les suivants sont propres à CE thème, précis, différents les uns des autres, et suivent ce que la Bible déclare à son sujet jusqu'à la mise en pratique. "
             + "Interdit : « Introduction » et « Conclusion » (la conclusion sera ajoutée ensuite). Réponds uniquement par les " + NB_SOUS_TITRES + " sous-titres, un par ligne.";
@@ -757,13 +765,18 @@ public class BibleActivity extends Activity {
     }
 
     // Étape 2 : rédaction d'UN sous-titre du plan à chaque appel
-    String consigneSection(String th, String[] plan, int i) {
-        StringBuilder sb = new StringBuilder("Thème ou sujet : " + th + "\n\nPlan de la prédication :\n");
+    String consigneSection(String th, String verset, String[] plan, String[] idees, boolean planUtilisateur, int i) {
+        StringBuilder sb = new StringBuilder("Thème ou sujet : " + th + "\n");
+        if (!verset.isEmpty()) sb.append("Verset du thème (texte de base) : ").append(verset).append("\n");
+        sb.append("\nPlan de la prédication :\n");
         for (int k = 0; k < plan.length; k++) sb.append(k + 1).append(". ").append(plan[k]).append("\n");
+        if (planUtilisateur) sb.append("\nCe plan a été fixé par le prédicateur : suis-le fidèlement, sans le modifier.\n");
         sb.append("\nRédige maintenant UNIQUEMENT la partie n° ").append(i + 1).append(" « ").append(plan[i]).append(" ». ");
+        if (idees[i] != null && !idees[i].isEmpty()) sb.append("Idées données par le prédicateur pour cette partie, à développer : « ").append(idees[i]).append(" ». ");
+        if (!verset.isEmpty()) sb.append("Appuie-toi sur le verset du thème quand c'est pertinent. ");
         sb.append("N'écris PAS le sous-titre (il est déjà affiché) : écris seulement le développement, sans aucun titre. ");
         boolean dernier = i == plan.length - 1;
-        if (i == 0) {
+        if (i == 0 && !planUtilisateur) {
             sb.append("Donne la définition du thème ou ce que l'on sait du thème, puis explique ce que la Bible déclare à ce sujet en citant les versets avec leur référence. ");
         } else if (dernier) {
             sb.append("Termine la prédication : résume l'essentiel du thème en quelques phrases, lance un appel final clair, puis une courte prière. ");
@@ -772,6 +785,11 @@ public class BibleActivity extends Activity {
         }
         sb.append("Style de prédication : clair, oral, simple, de 250 à 350 mots, sans t'écarter du thème et sans répéter ce qui est dit dans les autres parties.");
         return sb.toString();
+    }
+
+    String cleCache(String th, String verset, String[] points) {
+        if (verset.isEmpty() && points.length == 0) return "ia3_" + norm(th).hashCode();
+        return "ia3_" + norm(th + "|" + verset + "|" + TextUtils.join("|", points)).hashCode();
     }
 
     SpannableStringBuilder mettreEnForme(String texte) {
@@ -793,6 +811,8 @@ public class BibleActivity extends Activity {
         return sb;
     }
 
+    static final int MAX_PLAN = 10; // nombre maximum de cases du plan
+
     void ecrireTheme() {
         ecran("✍️ Écrire un thème");
         t("Saisissez le thème ou le sujet à développer (ex. : Le pardon, La persévérance, Le Saint-Esprit).", 15, false);
@@ -800,17 +820,51 @@ public class BibleActivity extends Activity {
         e.setHint("Votre thème ou sujet…");
         e.setSingleLine(false);
         champ(e);
+
+        t("Verset du thème (facultatif) : l'IA s'en sert pour trouver le plan et les développements.", 14, false);
+        EditText ev = new EditText(this);
+        ev.setHint("Ex. : Jean 3:16");
+        ev.setSingleLine(false);
+        champ(ev);
+
+        t("Plan (facultatif) : choisissez le nombre de points, puis écrivez pour chacun un titre ou des idées. Sans plan, l'IA le propose.", 14, false);
+        java.util.ArrayList<EditText> cases = new java.util.ArrayList<>();
+        LinearLayout zone = new LinearLayout(this);
+        zone.setOrientation(LinearLayout.VERTICAL);
+        Button[] bp = new Button[1];
+        bp[0] = b("📋 Plan : aucun point (l'IA le propose)", () -> {
+            String[] ch = new String[MAX_PLAN + 1];
+            ch[0] = "Aucun (l'IA propose le plan)";
+            for (int k = 1; k <= MAX_PLAN; k++) ch[k] = k + (k == 1 ? " point" : " points");
+            new AlertDialog.Builder(this).setTitle("Nombre de points du plan").setItems(ch, (dlg, w) -> {
+                while (cases.size() > w) { EditText x = cases.remove(cases.size() - 1); zone.removeView(x); }
+                while (cases.size() < w) {
+                    EditText x = new EditText(this);
+                    x.setHint("Point " + (cases.size() + 1) + " : titre ou idées…");
+                    x.setSingleLine(false);
+                    x.setMinLines(2);
+                    champ(x, zone);
+                    cases.add(x);
+                }
+                bp[0].setText(w == 0 ? "📋 Plan : aucun point (l'IA le propose)" : "📋 Plan : " + w + (w == 1 ? " point" : " points") + " (changer)");
+            }).show();
+        });
+        box.addView(zone);
+
         LinearLayout res = new LinearLayout(this);
         res.setOrientation(LinearLayout.VERTICAL);
         b("Développer ce thème", () -> {
             String th = e.getText().toString().trim();
             if (th.isEmpty()) { Toast.makeText(this, "Saisissez d'abord un thème", Toast.LENGTH_SHORT).show(); return; }
-            developper(th, res);
+            String ver = ev.getText().toString().trim();
+            java.util.ArrayList<String> pts = new java.util.ArrayList<>();
+            for (EditText x : cases) { String sx = x.getText().toString().trim(); if (!sx.isEmpty()) pts.add(sx); }
+            developper(th, ver, pts.toArray(new String[0]), res);
         });
         box.addView(res);
     }
 
-    void developper(String th, LinearLayout res) {
+    void developper(String th, String verset, String[] points, LinearLayout res) {
         res.removeAllViews();
         TextView tv = new TextView(this);
         tv.setTextSize(17);
@@ -818,7 +872,7 @@ public class BibleActivity extends Activity {
         carte(tv);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         lp.setMargins(0, dp(10), 0, dp(6));
-        String ck = "ia3_" + norm(th).hashCode();
+        final String ck = cleCache(th, verset, points);
         String done = sp.getString(ck, null);
         if (done != null) {
             sauverTheme(th, done);
@@ -844,20 +898,38 @@ public class BibleActivity extends Activity {
         TextView msgProg = (TextView) carteProg.getChildAt(1);
         new Thread(() -> {
             StringBuilder tout = new StringBuilder("# " + th + "\n\n");
+            if (!verset.isEmpty()) tout.append("## Verset du thème\n• ").append(verset).append("\n\n");
             // 1) Versets utilisables pour ce thème
             runOnUiThread(() -> msgProg.setText("📖 Recherche des versets qu'on peut utiliser pour ce thème…"));
             String v = null;
             for (int essai = 0; essai < 2 && v == null; essai++) {
-                try { v = versets(th); } catch (Exception x) { }
+                try { v = versets(th, verset); } catch (Exception x) { }
             }
             if (v != null) tout.append("## Versets à utiliser pour ce thème\n").append(v).append("\n");
             final String s1 = tout.toString();
             runOnUiThread(() -> { tv.setText(mettreEnForme(s1)); pb.setProgress(10); });
             // 2) Plan = sous-titres
-            runOnUiThread(() -> msgProg.setText("📋 Préparation du plan (les sous-titres)…"));
+            final boolean planUtilisateur = points.length > 0;
+            runOnUiThread(() -> msgProg.setText(planUtilisateur ? "📋 Lecture de votre plan…" : (verset.isEmpty() ? "📋 Préparation du plan (les sous-titres)…" : "📋 Préparation du plan à partir du verset…")));
             String[] plan = null;
-            for (int essai = 0; essai < 2 && plan == null; essai++) {
-                try { plan = planifier(th); } catch (Exception x) { }
+            String[] idees = null;
+            if (planUtilisateur) {
+                // Plan écrit par le prédicateur : on le suit tel quel (1re ligne = titre, le reste = idées à développer)
+                java.util.ArrayList<String> tt = new java.util.ArrayList<>(), dd = new java.util.ArrayList<>();
+                for (String pt : points) {
+                    String l1 = pt.split("\n")[0].trim();
+                    String titre = l1.length() > 100 ? l1.substring(0, 100).trim() + "…" : l1;
+                    tt.add(titre);
+                    dd.add(pt.equals(titre) ? "" : pt);
+                }
+                if (!norm(tt.get(tt.size() - 1)).startsWith("conclusion")) { tt.add("Conclusion"); dd.add(""); }
+                plan = tt.toArray(new String[0]);
+                idees = dd.toArray(new String[0]);
+            } else {
+                for (int essai = 0; essai < 2 && plan == null; essai++) {
+                    try { plan = planifier(th, verset); } catch (Exception x) { }
+                }
+                if (plan != null) { idees = new String[plan.length]; java.util.Arrays.fill(idees, ""); }
             }
             if (plan == null) {
                 String msg = "Impossible de développer ce thème pour le moment. Vérifiez Internet et réessayez dans une minute.";
@@ -865,6 +937,7 @@ public class BibleActivity extends Activity {
                 return;
             }
             final String[] pl = plan;
+            final String[] idl = idees;
             final int n = pl.length;
             tout.append("## Plan de la prédication\n");
             for (int i = 0; i < n; i++) tout.append(i + 1).append(". ").append(pl[i]).append("\n");
@@ -882,7 +955,7 @@ public class BibleActivity extends Activity {
                 });
                 for (int essai = 0; essai < 2; essai++) {
                     try {
-                        String corps = ia(IA_SYSTEME, consigneSection(th, pl, k), 200).replaceAll("(?m)^\\s*#+.*\\n?", "").trim();
+                        String corps = ia(IA_SYSTEME, consigneSection(th, verset, pl, idl, planUtilisateur, k), 200).replaceAll("(?m)^\\s*#+.*\\n?", "").trim();
                         tout.append("## ").append(pl[k]).append("\n").append(corps).append("\n\n");
                         ok++;
                         break;

@@ -14,7 +14,7 @@ public class BeatModel {
     public static final String[] QUAL_NAMES = {"majeur", "mineur", "septième", "majeur 7", "mineur 7", "diminué", "suspendu 4"};
     public static final String[] QUAL_SUF = {"", "m", "7", "maj7", "m7", "dim", "sus4"};
     static final int[][] QUAL = {{0, 4, 7}, {0, 3, 7}, {0, 4, 7, 10}, {0, 4, 7, 11}, {0, 3, 7, 10}, {0, 3, 6}, {0, 5, 7}};
-    public static final String[] PIANO_STYLES = {"Accords plaqués", "Arpège montant", "Arpège descendant", "Arpège aller-retour"};
+    public static final String[] PIANO_STYLES = {"Accords plaqués", "Arpège montant", "Arpège descendant", "Arpège aller-retour", "Mélodie (main droite) + accords", "Mélodie seule (main droite)"};
 
     /** Progressions : {écart en demi-tons depuis la tonalité, type d'accord}. */
     public static final String[] PROG_NAMES = {
@@ -45,10 +45,48 @@ public class BeatModel {
         public String id = "";
         public String name = "";
         public String file = "";
-        public int startBar = 0;      // mesure de départ (0 = début)
+        public int startBar = 0;      // ancien réglage : mesure de départ (utilisé seulement si offset < 0)
+        public int offset = -1;       // position exacte sur la durée, en samples (-1 = utiliser startBar)
+        public int cutIn = 0;         // samples retirés au début du son (coupe)
+        public int cutLen = 0;        // nombre de samples joués (0 = jusqu'à la fin du son)
         public float vol = 1f;        // 0 .. 2
         public boolean mute = false;
-        public int samples = 0;
+        public int samples = 0;       // longueur du fichier d'origine
+
+        /** Copie indépendante (pour annuler une modification). */
+        public Clip copy() {
+            Clip c = new Clip();
+            c.id = id; c.name = name; c.file = file; c.startBar = startBar; c.offset = offset;
+            c.cutIn = cutIn; c.cutLen = cutLen; c.vol = vol; c.mute = mute; c.samples = samples;
+            return c;
+        }
+
+        /** Début du son sur la durée du morceau, en samples. */
+        public int start(int samplesPerBar) {
+            return offset >= 0 ? offset : Math.max(0, startBar) * samplesPerBar;
+        }
+
+        /** Nombre de samples réellement joués, sachant que le fichier en contient pcmLen. */
+        public int used(int pcmLen) {
+            int avail = Math.max(0, pcmLen - Math.max(0, cutIn));
+            return cutLen > 0 ? Math.min(cutLen, avail) : avail;
+        }
+
+        /** Le son est-il joué en entier, sans coupe ? */
+        public boolean isWhole() { return cutIn <= 0 && cutLen <= 0; }
+    }
+
+    /** Vrai si un son déjà présent est le même (même nom, même durée de fichier) : évite les doublons à l'import. */
+    public Clip findSame(String name, int samples) {
+        for (Clip c : clips) if (c.name.equals(name) && c.samples == samples) return c;
+        return null;
+    }
+
+    /** Nombre de sons qui utilisent ce fichier (une coupe en deux sons partage le même fichier). */
+    public int usesOfFile(String file) {
+        int n = 0;
+        for (Clip c : clips) if (c.file.equals(file)) n++;
+        return n;
     }
 
     /** Résolution de l'éditeur libre : 24 pulsations par temps (double-croche = 6, triple-croche = 3, triolet de croches = 8). */
@@ -89,6 +127,10 @@ public class BeatModel {
     public int[] soloStep = new int[MAXSTEPS];             // 0 rien, 1..6 notes de la gamme
     public boolean[][] drum = new boolean[5][MAXSTEPS];
     public float[] vol = {0.8f, 0.9f, 0.8f, 0.7f};
+    /** Table de mixage (après la composition) : niveau et coupure de chaque instrument, niveau général. */
+    public float[] mixGain = {1f, 1f, 1f, 1f};
+    public boolean[] mixMute = new boolean[NT];
+    public float masterGain = 1f;
     public List<Clip> clips = new ArrayList<>();
     /** custom[piste][mesure] = vrai : cette mesure est jouée avec les notes libres au lieu du motif. */
     public boolean[][] custom = new boolean[NT][MAXBARS];
@@ -122,7 +164,12 @@ public class BeatModel {
                 notes.add(new Note(inst, bar, t, 6, base + (bassStep[s] == 2 ? 7 : bassStep[s] == 3 ? 12 : 0), 1f));
             } else if (inst == PIANO && pianoHit[s]) {
                 int pb = 48 + root; if (pb > 55) pb -= 12;
-                if (pianoStyle == 0) { for (int tn : tones) notes.add(new Note(inst, bar, t, 12, pb + tn, 1f)); }
+                if (pianoStyle >= 4) {
+                    if (pianoStyle == 4) for (int tn : tones) notes.add(new Note(inst, bar, t, 12, pb - 12 + tn, 0.7f));
+                    notes.add(new Note(inst, bar, t, 12, pianoMelodyNote(bar, k), 1f));
+                    k++;
+                }
+                else if (pianoStyle == 0) { for (int tn : tones) notes.add(new Note(inst, bar, t, 12, pb + tn, 1f)); }
                 else { notes.add(new Note(inst, bar, t, 12, pb + 12 + tones[k % tones.length], 1f)); k++; }
             } else if (inst == SOLO && soloStep[s] > 0) {
                 int[] sc = minorish(bar) ? new int[]{0, 3, 5, 7, 10, 12} : new int[]{0, 2, 4, 7, 9, 12};
@@ -131,6 +178,13 @@ public class BeatModel {
             }
         }
         custom[inst][bar] = true;
+    }
+
+    /** Mélodie du piano (main droite) : marche dans la gamme de l'accord, en montant puis en redescendant (k = n-ième note jouée). */
+    public int pianoMelodyNote(int bar, int k) {
+        int[] sc = minorish(bar) ? new int[]{0, 3, 5, 7, 10, 12, 10, 7, 5, 3} : new int[]{0, 2, 4, 7, 9, 12, 9, 7, 4, 2};
+        int base = 72 + (chordRoot[bar] > 6 ? chordRoot[bar] - 12 : chordRoot[bar]);
+        return base + sc[k % sc.length];
     }
 
     /** Nouveau projet avec un petit beat prêt à jouer. */

@@ -38,7 +38,9 @@ public class ComposeActivity extends Activity {
     private PcmPlayer loop;
     private boolean looping = false;
     private boolean autoConv = false, dirty = false;
-    private Button playBtn, rhyBtn;
+    private Button playBtn, drumsBtn;
+    private boolean withDrums = true;      // on n'entend que l'instrument en cours + la batterie
+    private boolean barLeft = false;
     private final Runnable saveRun = () -> StudioStore.save(this, m);
 
     @Override
@@ -53,29 +55,33 @@ public class ComposeActivity extends Activity {
         refresh();
     }
 
-    @Override protected void onStop() {
-        super.onStop();
+    /** On sauvegarde dès la pause : l'écran précédent se recharge juste après et doit voir ce travail. */
+    @Override protected void onPause() {
+        super.onPause();
         stopLoop();
-        if (m != null) leaveBar();
+        if (m == null) return;
+        leaveBar();
         ui.removeCallbacks(saveRun);
         StudioStore.save(this, m);
     }
 
-    @Override protected void onRestart() {
-        super.onRestart();
-        if (m == null) return;
-        enterBar();
-        refresh();
+    @Override protected void onResume() {
+        super.onResume();
+        if (m == null || roll == null) return;
+        if (barLeft) { enterBar(); refresh(); }
     }
 
     /** Les notes du style s'affichent pour être modifiées ; si on ne touche à rien, la mesure reste pilotée par le style. */
     private void enterBar() {
+        barLeft = false;
         autoConv = false;
         dirty = false;
         if (!m.custom[inst][bar]) { m.patternToNotes(inst, bar); autoConv = true; }
     }
 
     private void leaveBar() {
+        if (barLeft) return;
+        barLeft = true;
         if (autoConv && !dirty) { m.clearNotes(inst, bar); m.custom[inst][bar] = false; }
         autoConv = false;
     }
@@ -98,6 +104,14 @@ public class ComposeActivity extends Activity {
 
         TextView title = Ui.text(this, "Composer : " + BeatModel.TRACKS[inst], 18, TCOL[inst], true);
         root.addView(title);
+        final String[] about = {
+                "Batterie : chaque ligne est un son (grosse caisse, caisse claire…).",
+                "Basse : une seule note grave à la fois. Le clavier à gauche montre les touches.",
+                "Piano : accords (plusieurs touches ensemble) ou mélodie main droite. Touche le clavier à gauche pour entendre.",
+                "Solo : la mélodie principale, une note à la fois, avec un autre son que le piano."};
+        TextView ab = Ui.text(this, about[inst] + (inst == BeatModel.DRUMS ? "" : " Tu n'entends que la batterie et le " + BeatModel.TRACKS[inst].toLowerCase() + " : les autres instruments sont coupés pendant que tu composes."), 12, Ui.MUTED, false);
+        ab.setPadding(0, 0, 0, Ui.dp(this, 4));
+        root.addView(ab);
 
         LinearLayout nav = Ui.row(this);
         Button prev = btn("◀", 0xFF2C3A4A), next = btn("▶", 0xFF2C3A4A);
@@ -128,14 +142,20 @@ public class ComposeActivity extends Activity {
         root.addView(vs, new LinearLayout.LayoutParams(-1, 0, 1f));
 
         LinearLayout r2 = Ui.row(this);
-        playBtn = btn("▶ Écouter la mesure", Ui.GREEN);
-        playBtn.setOnClickListener(v -> { if (looping) stopLoop(); else startLoop(-1); });
+        playBtn = btn("", Ui.GREEN);
+        playBtn.setOnClickListener(v -> { if (looping) stopLoop(); else startLoop(); });
         r2.addView(playBtn, Ui.weight(this, 2));
         if (inst != BeatModel.DRUMS) {
-            rhyBtn = btn("🥁 Rythme du style", TCOL[0]);
-            rhyBtn.setOnClickListener(v -> { if (looping) stopLoop(); else startLoop(BeatModel.DRUMS); });
-            r2.addView(rhyBtn, Ui.weight(this, 2));
+            drumsBtn = btn("", 0xFF2C3A4A);
+            drumsBtn.setOnClickListener(v -> {
+                withDrums = !withDrums;
+                boolean was = looping;
+                stopLoop();
+                if (was) startLoop();
+            });
+            r2.addView(drumsBtn, Ui.weight(this, 2));
         }
+        updatePlayLabels();
         if (inst == BeatModel.DRUMS) {
             Button roulBtn = btn("Roulement", TCOL[0]);
             roulBtn.setOnClickListener(v -> rollDialog());
@@ -283,14 +303,23 @@ public class ComposeActivity extends Activity {
     }
 
     // ---------------- Écoute ----------------
-    private void startLoop(final int only) {
+    /** Ce qu'on entend : l'instrument en cours + la batterie (ou la batterie seule si c'est elle qu'on compose). */
+    private int mask() { return BeatRenderer.composeMask(inst, withDrums); }
+
+    private void updatePlayLabels() {
+        String who = inst == BeatModel.DRUMS ? "la batterie" : (withDrums ? "le " + BeatModel.TRACKS[inst].toLowerCase() + " + batterie" : "le " + BeatModel.TRACKS[inst].toLowerCase() + " seul");
+        playBtn.setText(looping ? "■ Stop" : "▶ Écouter " + who);
+        if (drumsBtn != null) drumsBtn.setText(withDrums ? "🥁 Batterie : oui" : "🥁 Batterie : non");
+    }
+
+    private void startLoop() {
         stopLoop();
         looping = true;
-        if (only == BeatModel.DRUMS && rhyBtn != null) rhyBtn.setText("■ Stop"); else playBtn.setText("■ Stop");
+        updatePlayLabels();
         final BeatModel mm = m;
-        final int b2 = bar;
+        final int b2 = bar, mk = mask();
         new Thread(() -> {
-            float[] f = BeatRenderer.renderBar(mm, b2, only);
+            float[] f = BeatRenderer.renderBar(mm, b2, mk);
             final short[] s = BeatRenderer.toShorts(f);
             final int len = Math.min(s.length, BeatRenderer.samplesPerBar(mm));
             ui.post(() -> {
@@ -303,8 +332,7 @@ public class ComposeActivity extends Activity {
 
     private void stopLoop() {
         looping = false;
-        if (playBtn != null) playBtn.setText("▶ Écouter la mesure");
-        if (rhyBtn != null) rhyBtn.setText("🥁 Rythme du style");
+        if (playBtn != null) updatePlayLabels();
         if (loop != null) { loop.stop(); loop = null; }
     }
 
@@ -325,7 +353,7 @@ public class ComposeActivity extends Activity {
     // ---------------- Grille ----------------
     private class RollView extends View {
         private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final int labelW = Ui.dp(ComposeActivity.this, 54), rowH = Ui.dp(ComposeActivity.this, 30);
+        private final int labelW = Ui.dp(ComposeActivity.this, 64), rowH = Ui.dp(ComposeActivity.this, 30);
         private final int colMin = Ui.dp(ComposeActivity.this, 30);
 
         RollView(Context c) { super(c); }
@@ -358,8 +386,26 @@ public class ComposeActivity extends Activity {
                 c.drawRect(0, r * rowH, getWidth(), (r + 1) * rowH, p);
                 p.setColor(0xFF0B0F14);
                 c.drawLine(0, (r + 1) * rowH, getWidth(), (r + 1) * rowH, p);
-                p.setColor(inChord ? Ui.ACCENT : Ui.MUTED);
-                c.drawText(nameOf(pitch), Ui.dp(ComposeActivity.this, 3), r * rowH + rowH * 0.65f, p);
+                if (inst == 0) {
+                    p.setColor(inChord ? Ui.ACCENT : Ui.MUTED);
+                    c.drawText(nameOf(pitch), Ui.dp(ComposeActivity.this, 3), r * rowH + rowH * 0.65f, p);
+                } else {
+                    // clavier de piano dessiné : touches blanches et noires alignées sur les lignes
+                    p.setColor(0xFFF2F2F2);
+                    c.drawRect(0, r * rowH + 1, labelW - 3, (r + 1) * rowH - 1, p);
+                    if (black) {
+                        p.setColor(0xFF1B1B1B);
+                        c.drawRect(0, r * rowH + 2, labelW * 0.62f, (r + 1) * rowH - 2, p);
+                    } else if (pitch % 12 == 0 || inChord) {
+                        p.setColor(pitch % 12 == 0 ? 0xFF555555 : TCOL[inst]);
+                        c.drawText(pitch % 12 == 0 ? "Do" + (pitch / 12 - 1) : BeatModel.NOTES[pitch % 12],
+                                labelW * 0.64f - (pitch % 12 == 0 ? 0 : 0), r * rowH + rowH * 0.68f, p);
+                    }
+                    if (inChord) {
+                        p.setColor(TCOL[inst]);
+                        c.drawCircle(labelW - Ui.dp(ComposeActivity.this, 9), r * rowH + rowH / 2f, Ui.dp(ComposeActivity.this, 3), p);
+                    }
+                }
             }
             for (int i = 0; i <= nc; i++) {
                 int x = labelW + i * cw;
