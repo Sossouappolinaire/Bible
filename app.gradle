@@ -1,0 +1,38 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.tvkouame.studio'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.tvkouame.studio"
+        minSdk 23
+        targetSdk 34
+        versionCode 11
+        versionName "2.0"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    // Encodeur MP3 (LAME) pour la conversion après enregistrement
+    implementation 'com.github.naman14:TAndroidLame:1.1'
+    // Academy biblique : traduction anglais -> français sur le téléphone
+    implementation 'com.google.mlkit:translate:17.0.3'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
