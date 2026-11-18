@@ -29,6 +29,11 @@ jobs:
           cp *.java app/src/main/java/com/tvkouame/studio/
           cp AndroidManifest.xml app/src/main/AndroidManifest.xml
           cp app.gradle app/build.gradle
+          mkdir -p app/src/main/res/drawable app/src/main/res/mipmap app/src/main/res/mipmap-anydpi-v26
+          cp icon_bg.xml app/src/main/res/drawable/ic_launcher_bg.xml
+          cp icon_fg.xml app/src/main/res/drawable/ic_launcher_fg.xml
+          cp icon_full.xml app/src/main/res/mipmap/ic_launcher.xml
+          cp icon_adaptive.xml app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
 
       - name: Compiler l'APK
         run: gradle assembleDebug --stacktrace
